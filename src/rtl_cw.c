@@ -121,8 +121,8 @@ static float mixer, t = 0;
 
 struct control {
 	int		In_flg;
-	int		IQ_flg;
 	int		direct_sampling;
+    int 	enable_biastee;
 	int		agcFlag;
 	uint32_t frequency;
 	float	increment;			// sets local oscillator rate 
@@ -140,6 +140,7 @@ struct control {
 	float	WordsPerMinute;
 	float	threshold; //top threshold
 	float	response;
+	float	ScaleSpectrum;
 };
 
 int	rc;
@@ -446,7 +447,7 @@ void *controls_loop(void *threadarg)
 				else if ( !strcmp(newargv.we_wordv[i], "-g") ) { 
 					if (i+1 <= newargv.we_wordc) {
 						sscanf(newargv.we_wordv[i + 1], "%f", &tempfloat); // frequency
-						parameters.LNAgain = (int) (tempfloat) * 10;
+						parameters.LNAgain = (int) (tempfloat * 10);  /* tenths of a dB */
 						if (0 == parameters.LNAgain) {
 							 /* Enable automatic gain */
 							verbose_auto_gain(dev);
@@ -470,16 +471,16 @@ void *controls_loop(void *threadarg)
 				}
 				else if ( !strcmp(newargv.we_wordv[i], "-r") ) {  //resonant filter
 					if (i+1 <= newargv.we_wordc) {
-						sscanf(newargv.we_wordv[i + 1], "%f", &tempfloat); // frequency
-						if (tempfloat==0) {
-							parameters.resonantFilterFlag = FALSE;
-							fprintf(stderr, "Resonant filter disabled\n"); fflush(stderr);
-						}
-						else {
+						sscanf(newargv.we_wordv[i + 1], "%f", &tempfloat); // resonant gain
+				//		if (tempfloat==0) {
+				//			parameters.resonantFilterFlag = FALSE;
+				//			fprintf(stderr, "Resonant filter disabled\n"); fflush(stderr);
+				//		}
+				//		else {
 							parameters.resonantFilterFlag = TRUE; 	
 							parameters.attenuate = exp(tempfloat*0.230258509)*.001; // .001 is the initial default coupling gain
 							fprintf(stderr, "Resonant gain %.2f dB\n", tempfloat); fflush(stderr);
-						}
+				//		}
 						i++;
 					} //else toofewargs ();
 				}
@@ -514,6 +515,15 @@ void *controls_loop(void *threadarg)
 						i++;
 					} //else toofewargs ();
 				}
+				else if ( !strcmp(newargv.we_wordv[i], "-S") ) { 
+					if (i+1 <= newargv.we_wordc) {
+						sscanf(newargv.we_wordv[i + 1], "%f", &tempfloat); // frequency
+						parameters.ScaleSpectrum = exp(tempfloat*0.230258509); // 1 is the initial default coupling gain
+						fprintf(stderr, "scale spectrum set to %.2f dB, %f\n", tempfloat, parameters.ScaleSpectrum ); fflush(stderr);
+						i++;
+					} //else toofewargs ();
+				}
+
 			}
 
 		}
@@ -548,6 +558,7 @@ void usage(void)
 		"\t[-w WPM (resampling rate for binary output)]\n"
 		"\t[-h hostname host name for displays]\n"
 		"\t[-i [portno] input controls]\n"
+		"\t[-S Spectral Display (db) gain]\n"
 		"\tfilename (if no file name defaults to stdout)\n\n");
 	exit(1);
 }
@@ -591,7 +602,7 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 	struct llist *rpt;
 	
     float float_IQ[4];
-	char message[50];
+	char message[80];
 
 	int 	count;
 
@@ -852,7 +863,7 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 					if (parameters.resampleFlag==TRUE) {
 						resample += 1.2; //(wpm/25.0);
 						if (resample >=120){ // 25wpm if resamplestep = wpm/25.0
-							sprintf(message, "%d",(gaussB >= 0.0)); //outputs both binary and envelope
+							snprintf(message,80, "%d",(gaussB >= 0.0)); //outputs both binary and envelope
 							if ((numbytes = sendto(sockfdb, &message[0], strlen(message), 0,portb->ai_addr, portb->ai_addrlen)) == -1) {
 								perror("Binary stream error");
 								exit (1);
@@ -869,34 +880,34 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 						//differentialdata[differentialIndx] = (float)  3*logf(1+  100.0 * gaussB); 
 						// outputting the I for u/l resonant filters, smoothed comparator output (CW), 
 						//if (parameters.signalVnoise == 0.0) 
-							sprintf(message, "%ld %.8f %.8f %.5f %.8f",counter , (float) integ_2_out*100 , (float) integ_11_out*100 , (float) gaussB, (float) gaussA*100 );
+							snprintf(message,80, "%ld %.8f %.8f %.5f %.8f", counter , (float) integ_2_out*100 , (float) integ_11_out*100 , (float) gaussB, (float) gaussA*100 );
+						// debug	fprintf(stderr, "%s\n", message);
 						//else sprintf(message, "%ld %.8f %.8f %.5f %.8f",counter , (float) integ_2_out , (float) integ_11_out , (float) integ_8_out*1e-1, (float) integ_8_out ); //
-					}				
-					// send udp scope data to host
-					if (hostipFlag == TRUE) {
-						hostipCount = (hostipCount + 1) % 10;
-						if (hostipCount == 0) {
-							counter = (counter+1) % 10000000; 
-							if ((numbytes = sendto(sockfda, &message[0], strlen(message), 0,porta->ai_addr, porta->ai_addrlen)) == -1) {
-								perror("Display UDP error");
-								exit (1);
+									
+						// send udp scope data to host
+						if (hostipFlag == TRUE) {
+							hostipCount = (hostipCount + 1) % 10;
+							if (hostipCount == 0) {
+								counter = (counter+1) % 10000000; 
+								if ((numbytes = sendto(sockfda, &message[0], strlen(message), 0,porta->ai_addr, porta->ai_addrlen)) == -1) {
+									perror("Display UDP error");
+									exit (1);
+								}
 							}
 						}
 					}
-
-
 					kdiv = 0.0; 
 				}
 				//********************** outputing I/Q data to fft calculation *******************************
 				if (kfft >= 10.0) { //drop another factor  at 25WPM its a factor of 10...  4800Hz resample for gaussian filters 
-					float_IQ[0] = (float) hpy[ii]*128;  // I before resonant filters
-					float_IQ[1] = (float) hpv[ii]*128;	// Q before resonant filters
+					float_IQ[0] = (float) hpy[ii]*128*parameters.ScaleSpectrum;  // I before resonant filters
+					float_IQ[1] = (float) hpv[ii]*128*parameters.ScaleSpectrum;	// Q before resonant filters
 					if (parameters.cwFlg == FALSE){
-						float_IQ[2] = (float) (integ_2_out + integ_11_out)/parameters.attenuate;   //I after resonant filters
-						float_IQ[3] = (float) (integ_3_out + integ_12_out)/parameters.attenuate;	//Q after resonant filters
+						float_IQ[2] = (float) (integ_2_out + integ_11_out)*parameters.ScaleSpectrum/parameters.attenuate;   //I after resonant filters
+						float_IQ[3] = (float) (integ_3_out + integ_12_out)*parameters.ScaleSpectrum/parameters.attenuate;	//Q after resonant filters
 					} else {
-						float_IQ[2] = (float) (integ_2_out)/parameters.attenuate;   //I after resonant filters
-						float_IQ[3] = (float) (integ_3_out)/parameters.attenuate;	//Q after resonant filters					
+						float_IQ[2] = (float) (integ_2_out)*parameters.ScaleSpectrum/parameters.attenuate;   //I after resonant filters
+						float_IQ[3] = (float) (integ_3_out)*parameters.ScaleSpectrum/parameters.attenuate;	//Q after resonant filters					
 					}	
 					fwrite(&float_IQ[0], sizeof(float), 4, stdout); fflush (stdout);
 				//*****************************************************
@@ -953,7 +964,6 @@ int main(int argc, char **argv)
 	parameters.resampleFlag=TRUE;
 //	parameters.resampleFlag = FALSE; check this out
 	parameters.WordsPerMinute =  25;
-	parameters.IQ_flg = TRUE;
 	parameters.cwFlg = FALSE;
 
 	parameters.localosc=LO; // initialised for 800Hz local oscillator
@@ -967,10 +977,13 @@ int main(int argc, char **argv)
 	parameters.agcFlag = FALSE;
 	parameters.LNAgain = 0;
 
-		
+	parameters.enable_biastee = 0;
+	parameters.ScaleSpectrum = 1.0;
+	
+	
 	strcpy(&hostip[0], "127.0.0.1"); /// local host is the default for the decoding. 
 
-	while ((opt = getopt(argc, argv, "D:f:g:a:n:p:d:r:b:w:t:h:s:c:q")) != -1) {
+	while ((opt = getopt(argc, argv, "TD:f:g:a:n:p:d:r:b:w:t:h:s:c:q")) != -1) {
 		switch (opt) {
 		case 'D':
 			dev_index = verbose_device_search(optarg);
@@ -982,11 +995,14 @@ int main(int argc, char **argv)
 		case 'g':
 			parameters.LNAgain = (int)(atof(optarg) * 10); /* tenths of a dB */
 			break;
-		case 'a': // includes the input gain for resonant filter stage
+		case 'a':  																		// includes the input gain for resonant filter stage
 			parameters.agcFlag = TRUE;
+			parameters.resonantFilterFlag = TRUE;						
+			parameters.attenuate = exp(((float) (atof(optarg)))*0.230258509)*.001; 
+			break;
 		case 'r': // includes the input gain for resonant filter stage
 			parameters.resonantFilterFlag = TRUE;						
-			parameters.attenuate = exp(((float) (atof(optarg)))*0.230258509)*.001; // .001 is the initial default coupling gain
+			parameters.attenuate = exp(((float) (atof(optarg)))*0.230258509)*.001; 		// .001 is the initial default coupling gain
 			break;
 		case 'b': //  balance
 			parameters.balance = atof(optarg); // default is 1.0 
@@ -1017,9 +1033,6 @@ int main(int argc, char **argv)
 		case 'n':
 			bytes_to_read = (uint32_t)atof(optarg) * 2;
 			break;
-		case 'q':
-			parameters.IQ_flg = FALSE;
-			break;
 		case 's': // host ip
 			if (atof(optarg) == 1) {
 				if (parameters.localoscsv == 0.0) parameters.localoscsv = parameters.localosc;
@@ -1037,6 +1050,9 @@ int main(int argc, char **argv)
 				parameters.increment = parameters.localosc/48000.0;
 				parameters.testsignal = FALSE;
 			}
+			break;
+		case 'T':
+			parameters.enable_biastee = 1;
 			break;
 		default:
 			usage();
@@ -1176,6 +1192,13 @@ int main(int argc, char **argv)
 	if (parameters.agcFlag == TRUE) {
 		r = rtlsdr_set_agc_mode(dev, 1);
 	}
+
+	rtlsdr_set_bias_tee(dev, parameters.enable_biastee);
+	if (parameters.enable_biastee) {
+		fprintf(stderr, "activated bias-T\n"); 
+		fflush(stderr);
+	}
+
 	
 	if(strcmp(filename, "-") == 0) { /* Write samples to stdout */
 		file = stdout;
