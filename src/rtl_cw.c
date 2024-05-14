@@ -141,6 +141,7 @@ struct control {
 	float	threshold; //top threshold
 	float	response;
 	float	ScaleSpectrum;
+	int		Streaming_Flg; /// normally on for streaming of signal and spectrum 
 };
 
 int	rc;
@@ -357,17 +358,14 @@ void *controls_loop(void *threadarg)
 						i++;
 					} //else toofewargs ();
 				}
-/*				else if ( !strcmp(newargv.we_wordv[i], "-a") ) { //adjust the frequency up or down by arg
+				else if ( !strcmp(newargv.we_wordv[i], "-o") ) { //streaming output
 					if (i+1 <= newargv.we_wordc) {
 						sscanf(newargv.we_wordv[i + 1], "%f", &tempfloat); // frequency
-						parameters.frequency = parameters.frequency - (int) tempfloat;
-						verbose_set_frequency(dev, parameters.frequency);
-						integ_6_out = integ_15_out = 0.0;
-						integ_7_out = MARK_freq;
-						integ_16_out = SPACE_freq;
-						i++;
+						if (tempfloat == 0.0 ) parameters.Streaming_Flg == FALSE; 
+						else  parameters.Streaming_Flg == TRUE;
+
 					} //else toofewargs ();
-				} */
+				}
 				else if ( !strcmp(newargv.we_wordv[i], "-a") ) { //adjust the local oscillator
 					if (i+1 <= newargv.we_wordc) {
 						sscanf(newargv.we_wordv[i + 1], "%f", &tempfloat); // frequency
@@ -876,7 +874,7 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 				//	fprintf(stdout, "%d %g %g %g %g\n",i++, integ_2_out, integ_11_out, integ_7_out,  gaussB); fflush(stdout);
 
 //********************** Outputting to scope via UDP on selected port *********************************
-					if (parameters.resonantFilterFlag==TRUE) {  // outputs with resonant filter
+					if ((parameters.resonantFilterFlag==TRUE) && (parameters.Streaming_Flg == TRUE)) {  // outputs with resonant filter
 						//differentialdata[differentialIndx] = (float)  3*logf(1+  100.0 * gaussB); 
 						// outputting the I for u/l resonant filters, smoothed comparator output (CW), 
 						//if (parameters.signalVnoise == 0.0) 
@@ -900,16 +898,18 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 				}
 				//********************** outputing I/Q data to fft calculation *******************************
 				if (kfft >= 10.0) { //drop another factor  at 25WPM its a factor of 10...  4800Hz resample for gaussian filters 
-					float_IQ[0] = (float) hpy[ii]*128*parameters.ScaleSpectrum;  // I before resonant filters
-					float_IQ[1] = (float) hpv[ii]*128*parameters.ScaleSpectrum;	// Q before resonant filters
-					if (parameters.cwFlg == FALSE){
-						float_IQ[2] = (float) (integ_2_out + integ_11_out)*parameters.ScaleSpectrum/parameters.attenuate;   //I after resonant filters
-						float_IQ[3] = (float) (integ_3_out + integ_12_out)*parameters.ScaleSpectrum/parameters.attenuate;	//Q after resonant filters
-					} else {
-						float_IQ[2] = (float) (integ_2_out)*parameters.ScaleSpectrum/parameters.attenuate;   //I after resonant filters
-						float_IQ[3] = (float) (integ_3_out)*parameters.ScaleSpectrum/parameters.attenuate;	//Q after resonant filters					
-					}	
-					fwrite(&float_IQ[0], sizeof(float), 4, stdout); fflush (stdout);
+					if (parameters.Streaming_Flg == TRUE) {
+						float_IQ[0] = (float) hpy[ii]*128*parameters.ScaleSpectrum;  // I before resonant filters
+						float_IQ[1] = (float) hpv[ii]*128*parameters.ScaleSpectrum;	// Q before resonant filters
+						if (parameters.cwFlg == FALSE){
+							float_IQ[2] = (float) (integ_2_out + integ_11_out)*parameters.ScaleSpectrum/parameters.attenuate;   //I after resonant filters
+							float_IQ[3] = (float) (integ_3_out + integ_12_out)*parameters.ScaleSpectrum/parameters.attenuate;	//Q after resonant filters
+						} else {
+							float_IQ[2] = (float) (integ_2_out)*parameters.ScaleSpectrum/parameters.attenuate;   //I after resonant filters
+							float_IQ[3] = (float) (integ_3_out)*parameters.ScaleSpectrum/parameters.attenuate;	//Q after resonant filters					
+						}	
+						fwrite(&float_IQ[0], sizeof(float), 4, stdout); fflush (stdout);
+					}
 				//*****************************************************
 					kfft = 0.0; 
 				}
@@ -979,7 +979,7 @@ int main(int argc, char **argv)
 
 	parameters.enable_biastee = 0;
 	parameters.ScaleSpectrum = 1.0;
-	
+	parameters.Streaming_Flg = TRUE; // streming of udp signal and spectral data
 	
 	strcpy(&hostip[0], "127.0.0.1"); /// local host is the default for the decoding. 
 
@@ -995,14 +995,11 @@ int main(int argc, char **argv)
 		case 'g':
 			parameters.LNAgain = (int)(atof(optarg) * 10); /* tenths of a dB */
 			break;
-		case 'a':  																		// includes the input gain for resonant filter stage
+		case 'a': // includes the input gain for resonant filter stage
 			parameters.agcFlag = TRUE;
-			parameters.resonantFilterFlag = TRUE;						
-			parameters.attenuate = exp(((float) (atof(optarg)))*0.230258509)*.001; 
-			break;
 		case 'r': // includes the input gain for resonant filter stage
 			parameters.resonantFilterFlag = TRUE;						
-			parameters.attenuate = exp(((float) (atof(optarg)))*0.230258509)*.001; 		// .001 is the initial default coupling gain
+			parameters.attenuate = exp(((float) (atof(optarg)))*0.230258509)*.001; // .001 is the initial default coupling gain
 			break;
 		case 'b': //  balance
 			parameters.balance = atof(optarg); // default is 1.0 
